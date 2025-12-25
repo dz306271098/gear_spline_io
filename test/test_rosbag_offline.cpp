@@ -386,8 +386,24 @@ private:
         Logger::debug("  Mean accelerometer: [" + to_string(acc_mean.x()) + ", " +
                      to_string(acc_mean.y()) + ", " + to_string(acc_mean.z()) + "]");
 
-        // Estimate initial orientation (gravity alignment)
-        gravity_ = Eigen::Vector3d(0, 0, -acc_mean.norm());
+        // Estimate initial orientation using gravity alignment (g2R)
+        // g2R computes R such that R * acc_normalized = [0, 0, 1]
+        Eigen::Matrix3d R_init = CommonUtils::g2R(acc_mean);
+        current_orientation_ = Eigen::Quaterniond(R_init);
+        current_orientation_.normalize();
+
+        Logger::debug("  Initial orientation (wxyz): [" +
+                     to_string(current_orientation_.w()) + ", " +
+                     to_string(current_orientation_.x()) + ", " +
+                     to_string(current_orientation_.y()) + ", " +
+                     to_string(current_orientation_.z()) + "]");
+
+        // World frame gravity: pointing down in Z (negative)
+        // When stationary, accelerometer reads reaction force = -gravity in body frame
+        // After rotation to world: R * acc_body should give [0, 0, +g] for upward reaction
+        gravity_ = Eigen::Vector3d(0, 0, acc_mean.norm());
+
+        Logger::debug("  Gravity compensation: [0, 0, " + to_string(gravity_.z()) + "]");
 
         // Initialize spline at origin with identity rotation
         int64_t start_time_ns = static_cast<int64_t>(frame.timestamp * 1e9);
@@ -396,9 +412,17 @@ private:
         Logger::debug("  Spline start time: " + to_string(start_time_ns) + " ns");
         Logger::debug("  Knot interval: " + to_string(dt_ns) + " ns");
 
-        // Create initial control points (4 knots)
+        // Create initial control points (4 knots) with gravity-aligned orientation
         Eigen::Vector3d initial_pos = Eigen::Vector3d::Zero();
-        Eigen::Vector3d initial_ort_delta = Eigen::Vector3d::Zero();
+
+        // Convert initial orientation to axis-angle for spline
+        Eigen::AngleAxisd aa_init(current_orientation_);
+        Eigen::Vector3d initial_ort_delta = aa_init.angle() * aa_init.axis();
+
+        Logger::debug("  Initial orientation delta: [" +
+                     to_string(initial_ort_delta.x()) + ", " +
+                     to_string(initial_ort_delta.y()) + ", " +
+                     to_string(initial_ort_delta.z()) + "]");
 
         // Initialize spline with: dt_ns, num_knots=0, start_time_ns
         spline_.init(dt_ns, 0, start_time_ns);
@@ -465,20 +489,13 @@ private:
 
         int64_t frame_time_ns = static_cast<int64_t>(frame.timestamp * 1e9);
 
-        // Integrate IMU for velocity/position prediction
+        // Integrate IMU for position and orientation prediction
+        // Gravity is subtracted in world frame after rotating the accelerometer reading
         if (!imu.empty() && imu.size() >= 2) {
             for (size_t i = 1; i < imu.size(); i++) {
                 double dt = imu[i].timestamp - imu[i-1].timestamp;
                 if (dt > 0 && dt < 0.1) {
-                    // Rotate acceleration to world frame and remove gravity
-                    // gravity_ = [0, 0, +9.80] is the expected reading when stationary
-                    Eigen::Vector3d acc_w = current_orientation_ * imu[i].acc - gravity_;
-
-                    // Integrate velocity and position
-                    current_velocity_ += acc_w * dt;
-                    current_position_ += current_velocity_ * dt + 0.5 * acc_w * dt * dt;
-
-                    // Integrate orientation using gyro
+                    // Integrate orientation using gyro first
                     Eigen::Vector3d omega = imu[i].gyro;
                     double angle = omega.norm() * dt;
                     if (angle > 1e-8) {
@@ -486,6 +503,24 @@ private:
                         current_orientation_ = current_orientation_ * dq;
                         current_orientation_.normalize();
                     }
+
+                    // Rotate accelerometer to world frame
+                    // acc_body is specific force = linear_acceleration + gravity_in_body_frame
+                    // After rotating to world: acc_world = R * acc_body
+                    // To get linear acceleration: linear_acc = R * acc_body - gravity_world
+                    // where gravity_world = [0, 0, -9.8] points downward
+                    Eigen::Vector3d acc_world = current_orientation_ * imu[i].acc;
+
+                    // Subtract gravity (pointing down in world frame)
+                    // When stationary and level, acc_body ≈ [0, 0, 9.8] (reaction to gravity)
+                    // After rotation (if level): acc_world ≈ [0, 0, 9.8]
+                    // Linear acceleration = [0, 0, 9.8] - [0, 0, 9.8] = [0, 0, 0] ✓
+                    Eigen::Vector3d gravity_world(0, 0, gravity_.z()); // gravity_ was set to [0, 0, |acc_mean|]
+                    Eigen::Vector3d linear_acc = acc_world - gravity_world;
+
+                    // Integrate velocity and position
+                    current_velocity_ += linear_acc * dt;
+                    current_position_ += current_velocity_ * dt + 0.5 * linear_acc * dt * dt;
                 }
             }
         }
@@ -506,7 +541,7 @@ private:
             // Use IMU-integrated position for new control point
             Eigen::Vector3d new_pos = current_position_;
 
-            // Convert current orientation to axis-angle delta from reference
+            // Use current gyro-integrated orientation for rotation
             Eigen::AngleAxisd aa(current_orientation_);
             Eigen::Vector3d new_ort_delta = aa.angle() * aa.axis();
 
@@ -672,10 +707,21 @@ private:
                 double pt_thresh = 0.5;
                 double cov_thresh = 100.0;
 
+                // Debug: RCPs before
+                Eigen::Matrix<double, 24, 1> before_rcps = est_spline->getRCPs();
+
                 estimator_->updateIEKFLiDAR(pt_meas, ikd_tree_, pt_thresh, cov_thresh);
 
                 // Get updated RCPs from estimator
                 Eigen::Matrix<double, 24, 1> updated_rcps = est_spline->getRCPs();
+
+                // Debug: Show change in RCPs
+                double rcp_change = (updated_rcps - before_rcps).norm();
+                if (frame_count_ % 100 == 0) {
+                    Logger::debug("    RCP change: " + to_string(rcp_change));
+                    Logger::debug("    Last CP pos: [" + to_string(updated_rcps(12)) + ", " +
+                                 to_string(updated_rcps(13)) + ", " + to_string(updated_rcps(14)) + "]");
+                }
 
                 // Check for NaN before applying
                 if (updated_rcps.allFinite()) {
@@ -715,10 +761,17 @@ private:
             }
         }
 
-        // Save trajectory
+        // Save trajectory at the LATEST spline time (where IESKF updated)
+        // The spline covers [minTimeNs, maxTimeNs], we interpolate near the end
+        // to get the corrected pose from IESKF update
+        int64_t query_time = spline_.maxTimeNs() - static_cast<int64_t>(dt_ns);
+        if (query_time < spline_.minTimeNs()) {
+            query_time = spline_.minTimeNs();
+        }
+
         Eigen::Quaterniond q;
-        spline_.itpQuaternion(frame_time_ns, &q, nullptr, nullptr, nullptr);
-        Eigen::Vector3d p = spline_.itpPosition(frame_time_ns, nullptr);
+        spline_.itpQuaternion(query_time, &q, nullptr, nullptr, nullptr);
+        Eigen::Vector3d p = spline_.itpPosition(query_time, nullptr);
 
         Eigen::Matrix4d pose = Eigen::Matrix4d::Identity();
         pose.block<3,3>(0,0) = q.toRotationMatrix();
