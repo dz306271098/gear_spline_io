@@ -1,0 +1,59 @@
+# Gear-Spline LIO Configuration for Livox LiDAR
+# Milestone 1: Uniform B-spline with dt=0.05s (NORMAL mode)
+
+# LiDAR topic and type
+topic_lidar: "/livox/lidar"
+lidar_type: "Livox"
+
+# IMU topic (set if_lidar_only: false to enable)
+topic_imu: "/livox/imu"
+
+# Operating mode
+if_lidar_only: false
+
+# Livox specific parameters
+scan_line: 6              # Livox scan lines
+
+# LiDAR processing parameters
+ds_lm_voxel: 0.5          # Map downsampling voxel size (m)
+ds_scan_voxel: 0.3        # Scan downsampling voxel size (m)
+nn_thresh: 5.0            # Nearest neighbor threshold
+blind: 0.5                # Blind zone radius (m)
+point_filter_num: 3       # Point filter (3 for Livox - denser)
+num_points_upd: 5000      # Max points per update
+num_nn: 5                 # Nearest neighbors for plane fitting
+
+# Extrinsic: LiDAR to body (quaternion w, x, y, z; translation x, y, z)
+q_lb: [1.0, 0.0, 0.0, 0.0]
+t_lb: [0.0, 0.0, 0.0]
+w_pt: 0.01                # Point measurement weight
+
+# IMU parameters
+acc_ratio: false          # Set true if IMU accelerometer is in g units
+cov_ba: [0.0001, 0.0001, 0.0001]  # Accelerometer bias covariance
+cov_bg: [0.0001, 0.0001, 0.0001]  # Gyroscope bias covariance
+cov_acc: [0.1, 0.1, 0.1]          # Accelerometer noise covariance
+cov_gyro: [0.01, 0.01, 0.01]      # Gyroscope noise covariance
+
+# Spline parameters (Milestone 1: fixed dt=0.05s = 20Hz for NORMAL mode)
+knot_hz: 20               # Knot frequency (Hz) -> dt = 1/20 = 0.05s
+
+# Covariance parameters
+cov_P0: 0.02              # Initial state covariance factor
+cov_RCP_pos_old: 0.02     # Old control point position covariance factor
+cov_RCP_ort_old: 0.02     # Old control point orientation covariance factor
+cov_RCP_pos_new: 0.1      # New control point position covariance factor
+cov_RCP_ort_new: 0.1      # New control point orientation covariance factor
+std_sys_pos: 0.1          # Position process noise std
+std_sys_ort: 0.01         # Orientation process noise std
+coeff_cov: 10.0           # Covariance threshold coefficient
+
+# Map parameters
+cube_len: 2000.0          # Local map cube size (m)
+
+# IESKF parameters
+n_iter: 2                 # Number of IESKF iterations
+num_threads: 4            # OpenMP threads
+
+# Time synchronization
+lidar_time_offset: 0.0    # LiDAR timestamp offset (s)

@@ -1,0 +1,59 @@
+# Gear-Spline LIO Configuration for EEE_03 Dataset (NTU VIRAL)
+# Ouster OS1-16 LiDAR + Ouster IMU
+
+# LiDAR topic and type
+topic_lidar: "/os1_cloud_node1/points"
+lidar_type: "Ouster"
+
+# IMU topic
+topic_imu: "/os1_cloud_node1/imu"
+
+# Operating mode
+if_lidar_only: false
+
+# Gear system (Milestone 2)
+gear_enabled: true
+
+# LiDAR processing parameters
+ds_lm_voxel: 0.5        # Map downsampling voxel size (m)
+ds_scan_voxel: 0.25     # Scan downsampling voxel size (m)
+nn_thresh: 5.0          # Nearest neighbor threshold
+blind: 1.0              # Blind zone radius (m)
+point_filter_num: 1     # Point filter (1 = use all points)
+num_points_upd: 5000    # Max points per update
+num_nn: 5               # Nearest neighbors for plane fitting
+
+# Extrinsic: LiDAR to body (identity for now)
+q_lb: [1.0, 0.0, 0.0, 0.0]
+t_lb: [0.0, 0.0, 0.0]
+w_pt: 0.01              # Point measurement weight
+
+# IMU parameters (Ouster OS1 IMU)
+acc_ratio: false        # IMU accelerometer in m/s^2
+cov_ba: [0.0001, 0.0001, 0.0001]  # Accelerometer bias covariance
+cov_bg: [0.0001, 0.0001, 0.0001]  # Gyroscope bias covariance
+cov_acc: [0.1, 0.1, 0.1]          # Accelerometer noise covariance
+cov_gyro: [0.01, 0.01, 0.01]      # Gyroscope noise covariance
+
+# Spline parameters (NORMAL mode: dt=0.05s)
+knot_hz: 20             # Knot frequency (Hz) -> dt = 0.05s
+
+# Covariance parameters
+cov_P0: 0.02
+cov_RCP_pos_old: 0.02
+cov_RCP_ort_old: 0.02
+cov_RCP_pos_new: 0.1
+cov_RCP_ort_new: 0.1
+std_sys_pos: 0.1
+std_sys_ort: 0.01
+coeff_cov: 10.0
+
+# Map parameters
+cube_len: 2000.0
+
+# IESKF parameters
+n_iter: 2
+num_threads: 4
+
+# Time synchronization
+lidar_time_offset: 0.0
